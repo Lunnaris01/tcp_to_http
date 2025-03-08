@@ -20,7 +20,7 @@ func main() {
 			log.Fatal("failed to accept connection")
 		}
 		fmt.Println("Connection accepted successfully")
-		ch := RequestFromReader(reader)
+		ch := getLinesChannel(reader)
 		go printlines(ch)
 
 	}
