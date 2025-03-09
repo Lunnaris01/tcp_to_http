@@ -17,6 +17,21 @@ func (h Headers) Get(key string) (string, error) {
 	return val, nil
 }
 
+func (h Headers) SetKey(key, val string) {
+	h[strings.ToLower(key)] = val
+}
+
+func (h Headers) AddKey(key, val string) {
+	key = strings.ToLower(key)
+	v, ok := h[key]
+	if ok {
+		h[key] = v + ", " + val
+		return
+	}
+	h[key] = val
+	return
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	loc := bytes.Index(data, []byte("\r\n"))
 	if loc != -1 {
@@ -31,12 +46,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 			return 0, false, fmt.Errorf("Failed to Parse Request line with err %v", err)
 
 		}
-
-		val, ok := h[headerKey]
-		if ok {
-			headerVal = val + ", " + headerVal
-		}
-		h[headerKey] = headerVal
+		h.AddKey(headerKey, headerVal)
 
 		return loc + 2, false, nil
 	}

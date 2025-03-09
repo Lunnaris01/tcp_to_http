@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
-	"io"
 	"log"
 	"net"
 	"strconv"
@@ -61,49 +59,25 @@ func (s *Server) listen() {
 
 func (s *Server) handle(connection net.Conn) {
 	req, err := request.RequestFromReader(connection)
-
-	log.Println("parsed content successfully")
-	rline := req.RequestLine
-	log.Printf("Request line:\n- Method: %s\n- Target: %s\n- Version: %s\n", rline.Method, rline.RequestTarget, rline.HttpVersion)
-	log.Printf("Headers:\n")
-	for key, value := range req.Headers {
-		log.Printf("- %s: %s\n", key, value)
-	}
-	log.Printf("Body:\n%s\n", req.Body)
-
+	w := response.NewWriter(connection)
 	if err != nil {
-		hErr := &HandlerError{
-			ErrorCode:    response.StatusBadRequest,
-			ErrorMessage: err.Error(),
-		}
-		log.Print("First hErr")
-		hErr.Write(connection)
-	}
-	buf := bytes.NewBuffer([]byte("All good, frfr\n"))
-	hErr := s.handler(buf, req)
-	if hErr != nil {
-		log.Print("Second hERR")
-		hErr.Write(connection)
+		w.WriteStatusLine(response.StatusBadRequest)
+		body := []byte(fmt.Sprintf("Error parsing request: %v", err))
+		w.WriteHeaders(response.GetDefaultHeaders(len(body)))
+		w.WriteBody(body)
 		return
+
 	}
 
-	b := buf.Bytes()
+	s.handler(w, req)
 
-	response.WriteStatusLine(connection, response.StatusOk)
-	headers := response.GetDefaultHeaders(len(b))
-	response.WriteHeaders(connection, headers)
-	connection.Write(b)
 	return
 }
 
-type HandlerError struct {
-	ErrorCode    response.StatusCode
-	ErrorMessage string
-}
+type Handler func(w *response.Writer, req *request.Request)
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
-
-func DefaultHandler(w io.Writer, req *request.Request) *HandlerError {
+/*
+func DefaultHandler(w response.Writer, req *request.Request) *HandlerError {
 	handlerError := HandlerError{}
 	if req.RequestLine.Method == "GET" {
 		if req.RequestLine.RequestTarget == "/yourproblem" {
@@ -119,11 +93,4 @@ func DefaultHandler(w io.Writer, req *request.Request) *HandlerError {
 	return nil
 
 }
-
-func (handlerError HandlerError) Write(w io.Writer) {
-	log.Printf("Writing with handlerError:")
-	response.WriteStatusLine(w, handlerError.ErrorCode)
-	heMessageBytes := []byte(handlerError.ErrorMessage)
-	response.WriteHeaders(w, response.GetDefaultHeaders(len(heMessageBytes)))
-	w.Write(heMessageBytes)
-}
+*/
