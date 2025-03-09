@@ -44,15 +44,13 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 	request := Request{}
 	request.Headers = headers.NewHeaders()
-	buffer := make([]byte, 8)
+	buffer := make([]byte, 1024)
 	readToIndex := 0
 	parsedBytes := 0
 	var n int
 	var err error
 	for request.RequestStatus < 3 {
-		log.Print("Starting new Iteration")
 		if readToIndex >= len(buffer) {
-			log.Print("Increasing Buffer size")
 			newBuffer := make([]byte, len(buffer)*2) // double the size
 			copy(newBuffer, buffer[:readToIndex])    // copy only valid data
 			buffer = newBuffer
@@ -62,13 +60,9 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if parsedBytes == 0 {
 			n, err = reader.Read(buffer[readToIndex:])
 		}
-		log.Printf("Read %d bytes with err: %v", n, err)
-		log.Printf("Old index: %d", readToIndex)
 		readToIndex += n
-		log.Printf("New index: %d", readToIndex)
 
 		if err != nil {
-			log.Printf("Error reading")
 			if err == io.EOF {
 				if request.RequestStatus == 1 {
 					_, err = ParseContent(&request, buffer[:readToIndex]) // Try to parse twice for no header+no body requests..
@@ -94,7 +88,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			copy(buffer, buffer[parsedBytes:])
 			readToIndex -= parsedBytes
 		}
-		log.Printf("Finished Iteration of reading after parsing %d bytes", parsedBytes)
 	}
 
 	return &request, nil

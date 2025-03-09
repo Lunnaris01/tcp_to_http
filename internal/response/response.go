@@ -52,6 +52,14 @@ func GetDefaultHeaders(contentLen int) headers.Headers {
 	return headers
 }
 
+func GetDefaultChunkedHeaders() headers.Headers {
+	headers := headers.NewHeaders()
+	headers.AddKey("Transfer-Encoding", "chunked")
+	headers.AddKey("Content-Type", "text/plain")
+	headers.AddKey("Connection", "close")
+	return headers
+}
+
 /*
 func WriteHeaders(w io.Writer, headers headers.Headers) error {
 	for header, val := range headers {
@@ -76,17 +84,22 @@ const (
 	writerStateHeaders
 	writerStateBody
 	writerStateDone
+	writerStatusTrailer
 )
 
 type Writer struct {
-	Connection  io.Writer
-	writerState writerState
+	Connection       io.Writer
+	writerState      writerState
+	pos              int
+	numBytesPerWrite int
 }
 
 func NewWriter(w io.Writer) *Writer {
 	return &Writer{
-		Connection:  w,
-		writerState: writerStateStatusLine,
+		Connection:       w,
+		writerState:      writerStateStatusLine,
+		pos:              0,
+		numBytesPerWrite: 1024,
 	}
 }
 
@@ -140,4 +153,59 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	}
 	defer func() { w.writerState = writerStateDone }()
 	return w.Connection.Write(p)
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (n int, err error) {
+	if w.writerState != writerStateBody {
+		return 0, fmt.Errorf("Unable to write Body while in state %v", w.writerState)
+	}
+
+	// Write the chunk size in hexadecimal format
+	sizeHex := fmt.Sprintf("%x\r\n", len(p))
+	_, err = w.Connection.Write([]byte(sizeHex))
+	if err != nil {
+		return 0, fmt.Errorf("error writing chunk size: %v", err)
+	}
+
+	n, err = w.Connection.Write(p)
+	if err != nil {
+		return 0, fmt.Errorf("error %v", err)
+	}
+
+	// Write the trailing CRLF
+	_, err = w.Connection.Write([]byte("\r\n"))
+	if err != nil {
+		return 0, fmt.Errorf("error writing chunk trailer: %v", err)
+	}
+
+	return len(p), nil
+
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	n, err := w.Connection.Write([]byte("0\r\n"))
+	if err != nil {
+		return n, err
+	}
+	w.writerState = writerStatusTrailer
+	return n, nil
+
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.writerState != writerStatusTrailer {
+		return fmt.Errorf("Unable to write Trailers while in state %v", w.writerState)
+	}
+	w.writerState = writerStateHeaders
+	err := w.WriteHeaders(h)
+	if err != nil {
+		return err
+	}
+	w.writerState = writerStateDone
+	_, err = w.Connection.Write([]byte("\r\n"))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
