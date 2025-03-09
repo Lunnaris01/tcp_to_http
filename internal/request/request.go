@@ -46,18 +46,32 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	request.Headers = headers.NewHeaders()
 	buffer := make([]byte, 8)
 	readToIndex := 0
+	parsedBytes := 0
+	var n int
+	var err error
 	for request.RequestStatus < 3 {
+		log.Print("Starting new Iteration")
 		if readToIndex >= len(buffer) {
+			log.Print("Increasing Buffer size")
 			newBuffer := make([]byte, len(buffer)*2) // double the size
 			copy(newBuffer, buffer[:readToIndex])    // copy only valid data
 			buffer = newBuffer
 		}
-		n, err := reader.Read(buffer[readToIndex:])
+		log.Printf("Attempting to read from connection, current readToIndex = %d if parsedBytes: %d == 0", readToIndex, parsedBytes)
+		n = 0
+		if parsedBytes == 0 {
+			n, err = reader.Read(buffer[readToIndex:])
+		}
+		log.Printf("Read %d bytes with err: %v", n, err)
+		log.Printf("Old index: %d", readToIndex)
 		readToIndex += n
+		log.Printf("New index: %d", readToIndex)
+
 		if err != nil {
+			log.Printf("Error reading")
 			if err == io.EOF {
 				if request.RequestStatus == 1 {
-					_, err := ParseContent(&request, buffer[:readToIndex]) // Try to parse twice for no header+no body requests..
+					_, err = ParseContent(&request, buffer[:readToIndex]) // Try to parse twice for no header+no body requests..
 					if err != nil {
 						return &Request{}, fmt.Errorf("Failed to parse Content, maybe parts of the request are missing")
 					}
@@ -70,15 +84,17 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			}
 			log.Fatalf("Failed to read: %v", err)
 		}
-
-		parsedBytes, err := ParseContent(&request, buffer[:readToIndex])
+		log.Printf("Running Parse with request: %d, for buffer %s", request.RequestStatus, buffer[:readToIndex])
+		parsedBytes, err = ParseContent(&request, buffer[:readToIndex])
+		log.Printf("Parsed %d bytes\n", parsedBytes)
 		if err != nil {
 			return &Request{}, fmt.Errorf("Failed to parse Content")
 		}
 		if parsedBytes > 0 {
-			copy(buffer, buffer[parsedBytes:readToIndex])
+			copy(buffer, buffer[parsedBytes:])
 			readToIndex -= parsedBytes
 		}
+		log.Printf("Finished Iteration of reading after parsing %d bytes", parsedBytes)
 	}
 
 	return &request, nil
@@ -86,11 +102,13 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 }
 
 func ParseContent(r *Request, buffer []byte) (int, error) {
+	log.Printf("ParseContent called: RequestStatus=%d, Buffer='%s'", r.RequestStatus, string(buffer))
 	if r.RequestStatus == 0 {
 		return r.parse(buffer)
 	}
 	if r.RequestStatus == 1 {
 		n, done, err := r.Headers.Parse(buffer)
+		log.Printf("Read N: %d bytes with err: %v and done: %v", n, err, done)
 		if done {
 			r.RequestStatus = 2
 		}
@@ -132,22 +150,26 @@ func ParseRequestLine(reqLineString string) (*RequestLine, error) {
 }
 
 func parseBody(r *Request, buffer []byte) (int, error) {
-	cLen, err := r.Headers.Get("Content-Length")
-	if err != nil {
+	log.Print("Parsing Body!")
+	cLen, ok := r.Headers.Get("Content-Length")
+	if ok != nil {
+		log.Print("No Content-Length Header found! Assuming Empty Body!")
 		r.RequestStatus = 3
 		return 0, nil
 	}
-	expected_length, _ := strconv.Atoi(cLen)
+	expected_length, err := strconv.Atoi(cLen)
 	if err != nil {
-		return 0, fmt.Errorf("Missing Content-Length header!")
+		return 0, fmt.Errorf("Malformed content of Content-Length Header")
 	}
 	if len(buffer) == expected_length {
-		r.Body = buffer
+		log.Print("Content length matching Content-Length header")
+		r.Body = make([]byte, len(buffer))
+		copy(r.Body, buffer)
 		r.RequestStatus = 3
 		return expected_length, nil
 	}
 	if len(buffer) > expected_length {
-		return 0, fmt.Errorf("Body longer than expected!")
+		return 0, fmt.Errorf("Body longer than expected")
 	}
 	return 0, nil
 }

@@ -3,6 +3,7 @@ package headers
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -17,7 +18,10 @@ func (h Headers) Get(key string) (string, error) {
 }
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
-	if loc := bytes.Index(data, []byte("\r\n")); loc != -1 {
+	loc := bytes.Index(data, []byte("\r\n"))
+	if loc != -1 {
+		log.Print(loc)
+		log.Print(string(data[:loc]))
 		if loc == 0 {
 			return 2, true, nil
 		}
@@ -36,11 +40,13 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 
 		return loc + 2, false, nil
 	}
+	log.Print(loc)
 	return 0, false, nil
 
 }
 
 func ParseHeaderLine(headerLine string) (string, string, error) {
+	log.Printf("Parsing Header line: %s", headerLine)
 	trimmedline := strings.TrimSpace(headerLine)
 	splitLine := strings.SplitN(trimmedline, ":", 2)
 	if len(splitLine) != 2 {
@@ -57,7 +63,7 @@ func ParseHeaderLine(headerLine string) (string, string, error) {
 		}
 	}
 	val := strings.TrimSpace(splitLine[1])
-
+	log.Printf("Parsed Header and added key, value: %s: %s", key, val)
 	return key, val, nil
 }
 
