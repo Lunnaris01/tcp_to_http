@@ -3,14 +3,18 @@ package request
 import (
 	"bytes"
 	"fmt"
+	"httpfromtcp/internal/headers"
 	"io"
 	"log"
 	"slices"
+	"strconv"
 	"strings"
 )
 
 type Request struct {
 	RequestLine   RequestLine
+	Headers       headers.Headers
+	Body          []byte
 	RequestStatus int // 0 : reading RequestLine, 1: Reading Headers, 2: Reading Body, 3: done
 }
 
@@ -39,9 +43,10 @@ type RequestLine struct {
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
 	request := Request{}
+	request.Headers = headers.NewHeaders()
 	buffer := make([]byte, 8)
 	readToIndex := 0
-	for request.RequestStatus == 0 {
+	for request.RequestStatus < 3 {
 		if readToIndex >= len(buffer) {
 			newBuffer := make([]byte, len(buffer)*2) // double the size
 			copy(newBuffer, buffer[:readToIndex])    // copy only valid data
@@ -49,27 +54,26 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 		n, err := reader.Read(buffer[readToIndex:])
 		readToIndex += n
-		fmt.Printf("Bufferlen: %v, Buffercap: %v\n", len(buffer), cap(buffer))
-		fmt.Println(string(buffer))
 		if err != nil {
 			if err == io.EOF {
-				_, err := request.parse(buffer[:readToIndex])
-				if err != nil {
-					fmt.Println("F")
-					return &Request{}, fmt.Errorf("Failed to parse after hitting EOF")
+				if request.RequestStatus == 1 {
+					_, err := ParseContent(&request, buffer[:readToIndex]) // Try to parse twice for no header+no body requests..
+					if err != nil {
+						return &Request{}, fmt.Errorf("Failed to parse Content, maybe parts of the request are missing")
+					}
+				}
+				_, err = ParseContent(&request, buffer[:readToIndex])
+				if err != nil || request.RequestStatus != 3 {
+					return &Request{}, fmt.Errorf("Failed to parse Content, maybe parts of the request are missing")
 				}
 				break
 			}
 			log.Fatalf("Failed to read: %v", err)
 		}
 
-		parsedBytes, err := request.parse(buffer)
-		//fmt.Printf("Processed N bytes: %d\n", n)
-		//fmt.Printf("%v\n", strings.Contains(string(buffer), "\r\n"))
-		//fmt.Printf("%v\n", bytes.Contains(buffer, []byte("\r\n")))
-		//fmt.Printf("Requeststatus: %v\n", request.RequestStatus)
+		parsedBytes, err := ParseContent(&request, buffer[:readToIndex])
 		if err != nil {
-			log.Fatalf("Failed to parse Requestline %v", err)
+			return &Request{}, fmt.Errorf("Failed to parse Content")
 		}
 		if parsedBytes > 0 {
 			copy(buffer, buffer[parsedBytes:readToIndex])
@@ -81,9 +85,28 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 }
 
+func ParseContent(r *Request, buffer []byte) (int, error) {
+	if r.RequestStatus == 0 {
+		return r.parse(buffer)
+	}
+	if r.RequestStatus == 1 {
+		n, done, err := r.Headers.Parse(buffer)
+		if done {
+			r.RequestStatus = 2
+		}
+		return n, err
+
+	}
+	if r.RequestStatus == 2 {
+		return parseBody(r, buffer)
+	}
+
+	return 0, fmt.Errorf("Unknown Status")
+}
+
 func ParseRequestLine(reqLineString string) (*RequestLine, error) {
-	fmt.Println((reqLineString))
 	lineContent := strings.Split(reqLineString, " ")
+	fmt.Println(lineContent)
 	if len(lineContent) != 3 {
 		return &RequestLine{}, fmt.Errorf("Malformated request line with len %d", len(reqLineString))
 	}
@@ -97,8 +120,6 @@ func ParseRequestLine(reqLineString string) (*RequestLine, error) {
 	if !(slices.Contains(valid_methods, ret_req_line.Method)) {
 		return &RequestLine{}, fmt.Errorf("Invalid Method detected")
 	}
-	fmt.Printf("HttpVersion: %s\nExpected: %s\nEquality Check: %v\n", ret_req_line.HttpVersion, "HTTP/1.1", ret_req_line.HttpVersion == "HTTP/1.1")
-	fmt.Printf("Len1: %d, Len2: %d\n", len(ret_req_line.HttpVersion), len("HTTP/1.1"))
 	if ret_req_line.HttpVersion != "HTTP/1.1" {
 		return &RequestLine{}, fmt.Errorf("Malformated HttpVersion detected")
 	} else {
@@ -108,4 +129,25 @@ func ParseRequestLine(reqLineString string) (*RequestLine, error) {
 		return &RequestLine{}, fmt.Errorf("Malformated Method line detected")
 	}
 	return ret_req_line, nil
+}
+
+func parseBody(r *Request, buffer []byte) (int, error) {
+	cLen, err := r.Headers.Get("Content-Length")
+	if err != nil {
+		r.RequestStatus = 3
+		return 0, nil
+	}
+	expected_length, _ := strconv.Atoi(cLen)
+	if err != nil {
+		return 0, fmt.Errorf("Missing Content-Length header!")
+	}
+	if len(buffer) == expected_length {
+		r.Body = buffer
+		r.RequestStatus = 3
+		return expected_length, nil
+	}
+	if len(buffer) > expected_length {
+		return 0, fmt.Errorf("Body longer than expected!")
+	}
+	return 0, nil
 }
