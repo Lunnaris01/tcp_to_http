@@ -48,8 +48,36 @@ func handler(w *response.Writer, req *request.Request) {
 		handlerChunkBody(w, req)
 		return
 	}
+	if strings.HasPrefix(req.RequestLine.RequestTarget, "/video") {
+		log.Print("Handling Video")
+		handlerVideo(w, req)
+		return
+	}
 	handler200(w, req)
 	return
+}
+
+func handlerVideo(w *response.Writer, req *request.Request) {
+	videoBytes, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		log.Print("Failed to open Video")
+		return
+	}
+	err = w.WriteStatusLine(response.StatusOk)
+	if err != nil {
+		log.Print("Failed to write Status")
+		return
+	}
+
+	headers := response.GetDefaultHeaders(len(videoBytes))
+	headers.SetKey("Content-Type", "video/mp4")
+	err = w.WriteHeaders(headers)
+	if err != nil {
+		log.Print("Failed to write Headers")
+		return
+	}
+	w.WriteBody(videoBytes)
+
 }
 
 func handlerChunkBody(w *response.Writer, req *request.Request) {
