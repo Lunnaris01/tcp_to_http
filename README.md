@@ -1,1 +1,1 @@
-Project implementing the core features of HTTP based on a TCP reader.
+Simple Implementation of the HTTP Protocol using Golang.
